@@ -1,42 +1,26 @@
-# ...existing code...
-#!/usr/bin/env bash
-set -euo pipefail
+curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list
+curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list
+sudo systemctl enable --now tailscaled
 
-REPO_KEY="/usr/share/keyrings/tailscale-archive-keyring.gpg"
-REPO_LIST="/etc/apt/sources.list.d/tailscale.list"
-DIST="bookworm"
-
-# Download GPG key if not present
-if [ ! -f "$REPO_KEY" ]; then
-  sudo mkdir -p "$(dirname "$REPO_KEY")"
-  curl -fsSL "https://pkgs.tailscale.com/stable/debian/${DIST}.noarmor.gpg" | sudo tee "$REPO_KEY" >/dev/null
+# Read auth key securely:
+if [ -n "$TAILSCALE_AUTHKEY" ]; then
+	KEY="$TAILSCALE_AUTHKEY"
+elif [ -f /etc/tailscale/authkey ]; then
+	# read as root to avoid permission issues
+	KEY=$(sudo cat /etc/tailscale/authkey)
+else
+	echo "Error: TAILSCALE_AUTHKEY not set and /etc/tailscale/authkey not found."
+	echo "Place the key in /etc/tailscale/authkey (root-only, chmod 600) or export TAILSCALE_AUTHKEY."
+	exit 1
 fi
 
-# Add APT source list (idempotent)
-if [ ! -f "$REPO_LIST" ] || ! grep -q "pkgs.tailscale.com" "$REPO_LIST"; then
-  echo "deb [signed-by=${REPO_KEY}] https://pkgs.tailscale.com/stable/debian ${DIST} main" | sudo tee "$REPO_LIST" >/dev/null
+# If using the file, ensure safe permissions
+if [ -f /etc/tailscale/authkey ]; then
+	sudo chown root:root /etc/tailscale/authkey
+	sudo chmod 600 /etc/tailscale/authkey
 fi
 
-# Update and install package
-sudo apt-get update
-sudo apt-get install -y tailscale
-
-# Enable and start the service, fail with status if it doesn't start
-if ! sudo systemctl enable --now tailscaled.service; then
-  echo "Failed to enable/start tailscaled.service. Showing status:"
-  sudo systemctl status tailscaled.service --no-pager || true
-  exit 1
-fi
-
-# Get authkey from arg or env var
-AUTHKEY="${1:-${TAILSCALE_AUTHKEY:-}}"
-
-if [ -z "$AUTHKEY" ]; then
-  echo "Tailscale installed and service started. No authkey provided."
-  echo "To connect, run: sudo tailscale up --ssh --authkey=tskey-...  (or set TAILSCALE_AUTHKEY env var / pass as first arg)"
-  exit 0
-fi
-
-# Bring interface up
-sudo tailscale up --ssh --authkey="$AUTHKEY"
-# ...existing code...
+# Use the key (no hardcoded secret in the script)
+sudo tailscale up --ssh --authkey="$KEY"
